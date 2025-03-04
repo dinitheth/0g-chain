@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "license": "MIT",
   "scripts": {
-    "build": "hardhat compile",
+    "build": "node init && hardhat compile",
     "fmt:sol": "prettier 'contracts/**/*.sol' -w"
   },
   "devDependencies": {
