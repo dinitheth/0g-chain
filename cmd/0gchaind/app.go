@@ -109,8 +109,8 @@ func (ac appCreator) newApp(
 	if appOpts.Get(flagSkipLoadLatest) != nil {
 		skipLoadLatest = cast.ToBool(appOpts.Get(flagSkipLoadLatest))
 	}
-
-	mempool := app.NewPriorityMempool(app.PriorityNonceWithMaxTx(cast.ToInt(appOpts.Get(server.FlagMempoolMaxTxs))))
+	mempoolMaxTxs := cast.ToInt(appOpts.Get(server.FlagMempoolMaxTxs))
+	mempool := app.NewPriorityMempool(app.PriorityNonceWithMaxTx(mempoolMaxTxs))
 
 	bApp := app.NewBaseApp(logger, db, ac.encodingConfig,
 		baseapp.SetPruning(pruningOpts),
@@ -127,6 +127,7 @@ func (ac appCreator) newApp(
 		baseapp.SetIAVLLazyLoading(cast.ToBool(appOpts.Get(server.FlagIAVLLazyLoading))),
 		baseapp.SetChainID(chainID),
 		baseapp.SetMempool(mempool),
+		baseapp.SetMempoolMaxTxs(mempoolMaxTxs),
 		baseapp.SetTxInfoExtracter(extractTxInfo),
 	)
 	bApp.SetTxEncoder(ac.encodingConfig.TxConfig.TxEncoder())
