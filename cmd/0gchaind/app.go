@@ -19,6 +19,7 @@ import (
 	snapshottypes "github.com/cosmos/cosmos-sdk/snapshots/types"
 	"github.com/cosmos/cosmos-sdk/store"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/auth/signing"
 	"github.com/cosmos/cosmos-sdk/x/crisis"
 	ethermintflags "github.com/evmos/ethermint/server/flags"
 	"github.com/spf13/cast"
@@ -26,6 +27,8 @@ import (
 
 	"github.com/0glabs/0g-chain/app"
 	"github.com/0glabs/0g-chain/app/params"
+	gethtypes "github.com/ethereum/go-ethereum/core/types"
+	evmtypes "github.com/evmos/ethermint/x/evm/types"
 )
 
 const (
@@ -124,6 +127,7 @@ func (ac appCreator) newApp(
 		baseapp.SetIAVLLazyLoading(cast.ToBool(appOpts.Get(server.FlagIAVLLazyLoading))),
 		baseapp.SetChainID(chainID),
 		baseapp.SetMempool(mempool),
+		baseapp.SetTxInfoExtracter(extractTxInfo),
 	)
 	bApp.SetTxEncoder(ac.encodingConfig.TxConfig.TxEncoder())
 	abciProposalHandler := app.NewDefaultProposalHandler(mempool, bApp)
@@ -198,4 +202,53 @@ func accAddressesFromBech32(addresses ...string) ([]sdk.AccAddress, error) {
 		decodedAddresses = append(decodedAddresses, a)
 	}
 	return decodedAddresses, nil
+}
+
+var ErrMustHaveSigner error = errors.New("tx must have at least one signer")
+
+func extractTxInfo(ctx sdk.Context, tx sdk.Tx) (*sdk.TxInfo, error) {
+	sigs, err := tx.(signing.SigVerifiableTx).GetSignaturesV2()
+	if err != nil {
+		return nil, err
+	}
+
+	var sender string
+	var nonce uint64
+	var gasPrice uint64
+	var gasLimit uint64
+	var txType int32
+
+	if len(sigs) == 0 {
+		txType = 1
+		msgs := tx.GetMsgs()
+		if len(msgs) != 1 {
+			return nil, ErrMustHaveSigner
+		}
+		msgEthTx, ok := msgs[0].(*evmtypes.MsgEthereumTx)
+		if !ok {
+			return nil, ErrMustHaveSigner
+		}
+		ethTx := msgEthTx.AsTransaction()
+		signer := gethtypes.NewEIP2930Signer(ethTx.ChainId())
+		ethSender, err := signer.Sender(ethTx)
+		if err != nil {
+			return nil, ErrMustHaveSigner
+		}
+		sender = sdk.AccAddress(ethSender.Bytes()).String()
+		nonce = ethTx.Nonce()
+		gasPrice = ethTx.GasPrice().Uint64()
+		gasLimit = ethTx.Gas()
+	} else {
+		sig := sigs[0]
+		sender = sdk.AccAddress(sig.PubKey.Address()).String()
+		nonce = sig.Sequence
+	}
+
+	return &sdk.TxInfo{
+		SignerAddress: sender,
+		Nonce:         nonce,
+		GasLimit:      gasLimit,
+		GasPrice:      gasPrice,
+		Type:          txType,
+	}, nil
 }
