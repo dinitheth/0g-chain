@@ -450,6 +450,14 @@ func (mp *PriorityNonceMempool) Remove(tx sdk.Tx) error {
 		nonce = sig.Sequence
 	}
 
+	if _, exists := mp.counterBySender[sender]; exists {
+		if mp.counterBySender[sender] > 1 {
+			mp.counterBySender[sender] -= 1
+		} else {
+			delete(mp.counterBySender, sender)
+		}
+	}
+
 	scoreKey := txMeta{nonce: nonce, sender: sender}
 	score, ok := mp.scores[scoreKey]
 	if !ok {
@@ -466,14 +474,6 @@ func (mp *PriorityNonceMempool) Remove(tx sdk.Tx) error {
 	senderTxs.Remove(tk)
 	delete(mp.scores, scoreKey)
 	mp.priorityCounts[score.priority]--
-
-	if _, exists := mp.counterBySender[sender]; exists {
-		if mp.counterBySender[sender] > 1 {
-			mp.counterBySender[sender] -= 1
-		} else {
-			delete(mp.counterBySender, sender)
-		}
-	}
 
 	return nil
 }
