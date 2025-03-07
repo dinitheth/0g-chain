@@ -110,7 +110,7 @@ func (ac appCreator) newApp(
 		skipLoadLatest = cast.ToBool(appOpts.Get(flagSkipLoadLatest))
 	}
 	mempoolMaxTxs := cast.ToInt(appOpts.Get(server.FlagMempoolMaxTxs))
-	mempool := app.NewPriorityMempool(app.PriorityNonceWithMaxTx(mempoolMaxTxs))
+	mempool := app.NewPriorityMempool()
 
 	bApp := app.NewBaseApp(logger, db, ac.encodingConfig,
 		baseapp.SetPruning(pruningOpts),
