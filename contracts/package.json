@@ -8,7 +8,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "npm run clean && npm run compile && npm run ethermint-json",
+    "build": "node init && npm run clean && npm run compile && npm run ethermint-json",
     "clean": "hardhat clean",
     "compile": "hardhat compile",
     "coverage": "hardhat coverage",
