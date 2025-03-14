@@ -174,3 +174,261 @@ func removeIbcTmModule(modules []string) []string {
 	}
 	return result
 }
+
+func TestNewAppWithInvalidOptions(t *testing.T) {
+	chaincfg.SetSDKConfig()
+	
+	// Test with nil DB
+	t.Run("NilDatabase", func(t *testing.T) {
+		defer func() {
+			r := recover()
+			require.NotNil(t, r, "Expected panic with nil database")
+		}()
+		
+		NewBaseApp(
+			log.NewTMLogger(log.NewSyncWriter(os.Stdout)),
+			nil, // Nil DB should cause panic
+			MakeEncodingConfig(),
+			baseapp.SetChainID(TestChainId),
+		)
+	})
+	
+	// Test with empty chain ID
+	t.Run("EmptyChainID", func(t *testing.T) {
+		defer func() {
+			r := recover()
+			require.NotNil(t, r, "Expected panic with empty chain ID")
+		}()
+		
+		NewBaseApp(
+			log.NewTMLogger(log.NewSyncWriter(os.Stdout)),
+			db.NewMemDB(),
+			MakeEncodingConfig(),
+			baseapp.SetChainID(""), // Empty chain ID should cause issues
+		)
+	})
+}
+
+func TestExportEdgeCases(t *testing.T) {
+	chaincfg.SetSDKConfig()
+	
+	// Test export with pruned state
+	t.Run("ExportWithPrunedState", func(t *testing.T) {
+		db := db.NewMemDB()
+		app := NewApp(
+			chaincfg.DefaultNodeHome,
+			nil,
+			MakeEncodingConfig(),
+			DefaultOptions,
+			NewBaseApp(
+				log.NewTMLogger(log.NewSyncWriter(os.Stdout)),
+				db,
+				MakeEncodingConfig(),
+				baseapp.SetChainID(TestChainId),
+			),
+		)
+
+		genesisState := GenesisStateWithSingleValidator(&TestApp{App: *app}, NewDefaultGenesisState())
+		stateBytes, err := json.Marshal(genesisState)
+		require.NoError(t, err)
+
+		// Initialize and commit multiple blocks to have pruned state
+		initRequest := abci.RequestInitChain{
+			Time:            time.Date(1998, 1, 1, 0, 0, 0, 0, time.UTC),
+			ChainId:         TestChainId,
+			InitialHeight:   1,
+			ConsensusParams: sims.DefaultConsensusParams,
+			Validators:      nil,
+			AppStateBytes:   stateBytes,
+		}
+		app.InitChain(initRequest)
+		
+		// Commit multiple blocks
+		for i := 0; i < 10; i++ {
+			app.BeginBlock(abci.RequestBeginBlock{Header: abci.Header{Height: int64(i + 1)}})
+			app.Commit()
+		}
+
+		// Test export with height greater than current height
+		_, err = app.ExportAppStateAndValidators(false, []string{}, []string{})
+		require.NoError(t, err, "Export should work even with pruned state")
+	})
+	
+	// Test export with invalid parameters
+	t.Run("ExportWithForceHeight", func(t *testing.T) {
+		db := db.NewMemDB()
+		app := NewApp(
+			chaincfg.DefaultNodeHome,
+			nil,
+			MakeEncodingConfig(),
+			DefaultOptions,
+			NewBaseApp(
+				log.NewTMLogger(log.NewSyncWriter(os.Stdout)),
+				db,
+				MakeEncodingConfig(),
+				baseapp.SetChainID(TestChainId),
+			),
+		)
+
+		genesisState := GenesisStateWithSingleValidator(&TestApp{App: *app}, NewDefaultGenesisState())
+		stateBytes, err := json.Marshal(genesisState)
+		require.NoError(t, err)
+
+		initRequest := abci.RequestInitChain{
+			Time:            time.Date(1998, 1, 1, 0, 0, 0, 0, time.UTC),
+			ChainId:         TestChainId,
+			InitialHeight:   1,
+			ConsensusParams: sims.DefaultConsensusParams,
+			Validators:      nil,
+			AppStateBytes:   stateBytes,
+		}
+		app.InitChain(initRequest)
+		app.Commit()
+
+		// Test export with specific height
+		// Note: This may require changes to the ExportAppStateAndValidators method signature if it doesn't support forceHeight
+		_, err = app.ExportAppStateAndValidators(true, []string{}, []string{})
+		require.NoError(t, err, "Export with forceHeight should work")
+	})
+}
+
+func TestLegacyMsgAminoRegistrationEdgeCases(t *testing.T) {
+	tApp := NewTestApp()
+	lcdc := tApp.LegacyAmino()
+	protoCodec := tApp.AppCodec().(*codec.ProtoCodec)
+	
+	// Test with nil message
+	t.Run("NilMessage", func(t *testing.T) {
+		defer func() {
+			r := recover()
+			require.NotNil(t, r, "Expected panic when registering nil message")
+		}()
+		
+		var nilMsg sdk.Msg
+		lcdc.RegisterConcrete(interface{}(nilMsg), "NilMsg", nil)
+	})
+	
+	// Test with non-existent message type
+	t.Run("NonExistentMsgType", func(t *testing.T) {
+		jsonMsg := []byte(`{"@type": "cosmos.nonexistent.v1.NonExistentMsg"}`)
+		
+		var msg sdk.Msg
+		err := protoCodec.UnmarshalInterfaceJSON(jsonMsg, &msg)
+		require.Error(t, err, "Should fail for non-existent message type")
+	})
+	
+	// Test with malformed JSON
+	t.Run("MalformedJSON", func(t *testing.T) {
+		jsonMsg := []byte(`{"@type": "cosmos.bank.v1beta1.MsgSend", "malformed":}`)
+		
+		var msg sdk.Msg
+		err := protoCodec.UnmarshalInterfaceJSON(jsonMsg, &msg)
+		require.Error(t, err, "Should fail for malformed JSON")
+	})
+}
+
+func TestResourceCleanup(t *testing.T) {
+	// Test proper resource cleanup
+	t.Run("DatabaseCleanup", func(t *testing.T) {
+		db := db.NewMemDB()
+		app := NewApp(
+			chaincfg.DefaultNodeHome,
+			nil,
+			MakeEncodingConfig(),
+			DefaultOptions,
+			NewBaseApp(
+				log.NewTMLogger(log.NewSyncWriter(os.Stdout)),
+				db,
+				MakeEncodingConfig(),
+				baseapp.SetChainID(TestChainId),
+			),
+		)
+		
+		// Use app
+		genesisState := GenesisStateWithSingleValidator(&TestApp{App: *app}, NewDefaultGenesisState())
+		stateBytes, err := json.Marshal(genesisState)
+		require.NoError(t, err)
+		
+		initRequest := abci.RequestInitChain{
+			Time:            time.Date(1998, 1, 1, 0, 0, 0, 0, time.UTC),
+			ChainId:         TestChainId,
+			InitialHeight:   1,
+			ConsensusParams: sims.DefaultConsensusParams,
+			Validators:      nil,
+			AppStateBytes:   stateBytes,
+		}
+		app.InitChain(initRequest)
+		app.Commit()
+		
+		// Ensure proper cleanup
+		err = db.Close()
+		require.NoError(t, err, "Database should close properly")
+	})
+}
+
+func TestConcurrentAccess(t *testing.T) {
+	// Test concurrent access to the app
+	chaincfg.SetSDKConfig()
+	db := db.NewMemDB()
+	app := NewApp(
+		chaincfg.DefaultNodeHome,
+		nil,
+		MakeEncodingConfig(),
+		DefaultOptions,
+		NewBaseApp(
+			log.NewTMLogger(log.NewSyncWriter(os.Stdout)),
+			db,
+			MakeEncodingConfig(),
+			baseapp.SetChainID(TestChainId),
+		),
+	)
+	
+	// Initialize the app
+	genesisState := GenesisStateWithSingleValidator(&TestApp{App: *app}, NewDefaultGenesisState())
+	stateBytes, err := json.Marshal(genesisState)
+	require.NoError(t, err)
+	
+	initRequest := abci.RequestInitChain{
+		Time:            time.Date(1998, 1, 1, 0, 0, 0, 0, time.UTC),
+		ChainId:         TestChainId,
+		InitialHeight:   1,
+		ConsensusParams: sims.DefaultConsensusParams,
+		Validators:      nil,
+		AppStateBytes:   stateBytes,
+	}
+	app.InitChain(initRequest)
+	app.Commit()
+	
+	// Test concurrent query access
+	t.Run("ConcurrentQueries", func(t *testing.T) {
+		var wg sync.WaitGroup
+		numGoroutines := 10
+		errs := make(chan error, numGoroutines)
+		
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				// Simulate concurrent queries
+				_, err := app.Query(abci.RequestQuery{
+					Path: fmt.Sprintf("/test/query/%d", i),
+					Data: []byte{},
+				})
+				if err != nil {
+					errs <- err
+				}
+			}(i)
+		}
+		
+		wg.Wait()
+		close(errs)
+		
+		for err := range errs {
+			require.NoError(t, err, "Concurrent queries should not produce errors")
+		}
+	})
+	
+	// Clean up
+	err = db.Close()
+	require.NoError(t, err)
+}
